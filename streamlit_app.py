@@ -20,6 +20,40 @@ def process_excel_data(df, group_columns, selected_columns, max_rows_per_file, p
     # Filter dataframe to only include selected columns
     df_filtered = df[selected_columns].copy()
     
+    # Remove empty rows before processing
+    if status_text:
+        status_text.text("🧹 Cleaning data: Removing empty rows...")
+    
+    # Count rows before cleaning
+    rows_before = len(df_filtered)
+    
+    # Remove rows that are completely empty
+    df_filtered = df_filtered.dropna(how='all')
+    
+    # Remove rows where all selected columns are empty/null
+    df_filtered = df_filtered.dropna(subset=selected_columns, how='all')
+    
+    # Remove rows with only whitespace
+    for col in selected_columns:
+        if df_filtered[col].dtype == 'object':  # Only for string columns
+            df_filtered[col] = df_filtered[col].astype(str).str.strip()
+            df_filtered = df_filtered[df_filtered[col] != '']
+    
+    # Remove rows where all values are NaN, None, or empty strings
+    df_filtered = df_filtered.replace('', pd.NA).dropna(how='all')
+    
+    # Reset index after removing rows
+    df_filtered = df_filtered.reset_index(drop=True)
+    
+    rows_after = len(df_filtered)
+    rows_removed = rows_before - rows_after
+    
+    if status_text:
+        status_text.text(f"✅ Data cleaned: Removed {rows_removed} empty rows. Processing {rows_after} valid rows...")
+    
+    # Brief pause to show cleaning status
+    time.sleep(2)
+    
     # Create groups based on selected columns
     if len(group_columns) == 1:
         grouped = df_filtered.groupby(group_columns[0])
@@ -108,14 +142,27 @@ def main():
             
             st.success(f"✅ File loaded successfully! Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
             
+            # Check for empty rows and show cleaning preview
+            empty_rows_count = df.isnull().all(axis=1).sum()
+            mostly_empty_rows = df.isnull().sum(axis=1) >= (len(df.columns) * 0.8)
+            mostly_empty_count = mostly_empty_rows.sum()
+            
+            if empty_rows_count > 0 or mostly_empty_count > 0:
+                st.info(f"🧹 **Data Cleaning Preview**: Found {empty_rows_count} completely empty rows and {mostly_empty_count} mostly empty rows (80%+ empty). These will be automatically removed during processing.")
+            else:
+                st.success("✨ **Data Quality**: No empty rows detected - your data looks clean!")
+            
             # Display basic info about the file
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Total Rows", f"{df.shape[0]:,}")
             with col2:
                 st.metric("Total Columns", df.shape[1])
             with col3:
                 st.metric("File Size", f"{uploaded_file.size / (1024*1024):.2f} MB")
+            with col4:
+                clean_rows = df.shape[0] - df.isnull().all(axis=1).sum()
+                st.metric("Clean Rows", f"{clean_rows:,}", delta=f"-{df.isnull().all(axis=1).sum()}" if df.isnull().all(axis=1).sum() > 0 else None)
             
             # Preview data
             st.header("2. Data Preview")
@@ -271,16 +318,18 @@ def main():
         st.header("📖 How to Use")
         st.markdown("""
         1. **Upload** your Excel file (xlsx or xls)
-        2. **Select grouping columns** - each unique combination creates a separate CSV
-        3. **Choose output columns** - select which columns to include in CSV files
-        4. **Set max rows per file** - files larger than this will be split
-        5. **Generate and download** the ZIP file containing all CSV files
+        2. **Review** data cleaning preview (empty rows detection)
+        3. **Select grouping columns** - each unique combination creates a separate CSV
+        4. **Choose output columns** - select which columns to include in CSV files
+        5. **Set max rows per file** - files larger than this will be split
+        6. **Generate and download** the ZIP file containing all CSV files
         """)
         
         st.header("💡 Tips")
         st.markdown("""
         - **Multiple grouping columns**: Creates files for each unique combination
         - **Large groups**: Automatically split into smaller files
+        - **Empty row handling**: Automatically removes empty/blank rows
         - **File naming**: Based on group values (special characters removed)
         - **Local processing**: Everything runs on your computer
         """)

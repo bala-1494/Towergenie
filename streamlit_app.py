@@ -136,11 +136,34 @@ def main():
     
     if uploaded_file is not None:
         try:
-            # Load the Excel file
+            # Load the Excel file to check for multiple sheets
             with st.spinner("Loading Excel file..."):
-                df = pd.read_excel(uploaded_file)
-            
-            st.success(f"✅ File loaded successfully! Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
+                # Read Excel file to get sheet names
+                excel_file = pd.ExcelFile(uploaded_file)
+                sheet_names = excel_file.sheet_names
+                
+                # Check if multiple sheets exist
+                if len(sheet_names) > 1:
+                    st.info(f"📋 **Multi-sheet Excel detected!** Found {len(sheet_names)} sheets: {', '.join(sheet_names)}")
+                    
+                    # Let user select sheet
+                    st.header("2. Select Sheet/Tab")
+                    selected_sheet = st.selectbox(
+                        "Choose the sheet you want to process:",
+                        sheet_names,
+                        help="Select the specific sheet/tab from your Excel file to process"
+                    )
+                    
+                    # Load the selected sheet
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                    
+                    st.success(f"✅ Sheet '{selected_sheet}' loaded successfully! Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
+                    
+                else:
+                    # Single sheet - load directly
+                    selected_sheet = sheet_names[0]
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                    st.success(f"✅ File loaded successfully! Sheet: '{selected_sheet}' | Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
             
             # Check for empty rows and show cleaning preview
             empty_rows_count = df.isnull().all(axis=1).sum()
@@ -155,22 +178,24 @@ def main():
             # Display basic info about the file
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Rows", f"{df.shape[0]:,}")
+                st.metric("Selected Sheet", selected_sheet)
             with col2:
-                st.metric("Total Columns", df.shape[1])
+                st.metric("Total Rows", f"{df.shape[0]:,}")
             with col3:
-                st.metric("File Size", f"{uploaded_file.size / (1024*1024):.2f} MB")
+                st.metric("Total Columns", df.shape[1])
             with col4:
                 clean_rows = df.shape[0] - df.isnull().all(axis=1).sum()
                 st.metric("Clean Rows", f"{clean_rows:,}", delta=f"-{df.isnull().all(axis=1).sum()}" if df.isnull().all(axis=1).sum() > 0 else None)
             
             # Preview data
-            st.header("2. Data Preview")
+            next_section = "3. Data Preview" if len(sheet_names) > 1 else "2. Data Preview"
+            st.header(next_section)
             with st.expander("👀 View first 10 rows", expanded=False):
                 st.dataframe(df.head(10))
             
             # Column selection for grouping
-            st.header("3. Select Grouping Columns")
+            next_section = "4. Select Grouping Columns" if len(sheet_names) > 1 else "3. Select Grouping Columns"
+            st.header(next_section)
             st.markdown("Choose one or more columns to group by. Each unique combination will create separate CSV files.")
             
             available_columns = df.columns.tolist()
@@ -200,7 +225,8 @@ def main():
                         st.dataframe(preview_combos)
             
             # Column selection for output
-            st.header("4. Select Columns for Output")
+            next_section = "5. Select Columns for Output" if len(sheet_names) > 1 else "4. Select Columns for Output"
+            st.header(next_section)
             st.markdown("Choose which columns to include in the generated CSV files.")
             
             selected_columns = st.multiselect(
@@ -211,7 +237,8 @@ def main():
             )
             
             # Additional settings
-            st.header("5. Additional Settings")
+            next_section = "6. Additional Settings" if len(sheet_names) > 1 else "5. Additional Settings"
+            st.header(next_section)
             col1, col2 = st.columns(2)
             
             with col1:
@@ -233,7 +260,8 @@ def main():
             
             # Process button
             if group_columns and selected_columns:
-                st.header("6. Generate CSV Files")
+                next_section = "7. Generate CSV Files" if len(sheet_names) > 1 else "6. Generate CSV Files"
+                st.header(next_section)
                 
                 if st.button("🚀 Generate CSV Files", type="primary"):
                     # Create progress indicators
@@ -284,7 +312,7 @@ def main():
                             st.download_button(
                                 label="📥 Download All CSV Files (ZIP)",
                                 data=zip_buffer.getvalue(),
-                                file_name=f"split_csvs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                file_name=f"split_csvs_{selected_sheet}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                                 mime="application/zip",
                                 type="primary"
                             )
@@ -298,8 +326,55 @@ def main():
                             # Clear progress indicators on error
                             progress_bar.empty()
                             status_text.empty()
+                            
+                            # Show detailed error information for debugging
                             st.error(f"❌ Error processing data: {str(e)}")
-                            st.error("Please check your data and try again.")
+                            
+                            # Show error details in expandable section
+                            with st.expander("🔍 Error Details (for debugging)", expanded=False):
+                                st.code(f"""
+Error Type: {type(e).__name__}
+Error Message: {str(e)}
+
+Debug Information:
+- DataFrame shape: {df.shape if 'df' in locals() else 'Unknown'}
+- Group columns: {group_columns}
+- Selected columns: {selected_columns}
+- Max rows per file: {max_rows_per_file}
+                                """)
+                                
+                                # Show full traceback
+                                import traceback
+                                st.text("Full Traceback:")
+                                st.code(traceback.format_exc())
+                            
+                            # Suggest solutions
+                            st.info("""
+                            💡 **Possible Solutions:**
+                            - Check if your group columns contain valid data (no all-empty columns)
+                            - Ensure selected columns exist in the data
+                            - Try with fewer rows by filtering your data first
+                            - Check if there are special characters in your data causing issues
+                            - Verify your Excel file isn't corrupted
+                            """)
+                            
+                            # Add a test button for basic functionality
+                            if st.button("🧪 Test with Sample Data", help="Test the app with a small sample of your data"):
+                                try:
+                                    # Create a small test sample
+                                    test_df = df.head(10)
+                                    st.write("Testing with first 10 rows:")
+                                    st.dataframe(test_df)
+                                    
+                                    # Try processing the sample
+                                    test_csv_files, test_groups, test_files = process_excel_data(
+                                        test_df, group_columns, selected_columns, max_rows_per_file
+                                    )
+                                    st.success(f"✅ Sample test successful! Created {test_files} files from {test_groups} groups")
+                                    
+                                except Exception as test_e:
+                                    st.error(f"❌ Sample test also failed: {str(test_e)}")
+                                    st.code(traceback.format_exc())
             else:
                 if not group_columns:
                     st.warning("⚠️ Please select at least one grouping column.")
@@ -318,20 +393,23 @@ def main():
         st.header("📖 How to Use")
         st.markdown("""
         1. **Upload** your Excel file (xlsx or xls)
-        2. **Review** data cleaning preview (empty rows detection)
-        3. **Select grouping columns** - each unique combination creates a separate CSV
-        4. **Choose output columns** - select which columns to include in CSV files
-        5. **Set max rows per file** - files larger than this will be split
-        6. **Generate and download** the ZIP file containing all CSV files
+        2. **Select sheet** (if multiple sheets exist)
+        3. **Review** data cleaning preview (empty rows detection)
+        4. **Select grouping columns** - each unique combination creates a separate CSV
+        5. **Choose output columns** - select which columns to include in CSV files
+        6. **Set max rows per file** - files larger than this will be split
+        7. **Generate and download** the ZIP file containing all CSV files
         """)
         
         st.header("💡 Tips")
         st.markdown("""
+        - **Multi-sheet support**: Automatically detects and lets you choose sheets
+        - **Single sheet files**: Automatically processes the only available sheet
         - **Multiple grouping columns**: Creates files for each unique combination
         - **Large groups**: Automatically split into smaller files
         - **Empty row handling**: Automatically removes empty/blank rows
-        - **File naming**: Based on group values (special characters removed)
-        - **Local processing**: Everything runs on your computer
+        - **Sheet-specific processing**: Only selected sheet data is processed
+        - **File naming**: Includes sheet name in ZIP file for clarity
         """)
         
         st.header("⚙️ Technical Info")
